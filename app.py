@@ -1,93 +1,86 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-# Config pagina
-st.set_page_config(page_title="Monte Carlo Trading DCA", layout="wide")
+# Titolo st.markdown("# 📊 Monte Carlo Trading Simulator Avanzato")
 
-# Titolo
-st.title("📊 Monte Carlo Trading Simulator con DCA e Risk Management Personalizzato")
-
-# Parametri utente
+# Sidebar parametri
 st.sidebar.header("Parametri di Simulazione")
-
-capital = st.sidebar.number_input("Capitale Iniziale (€)", value=100000)
-risk_per_trade_pct = st.sidebar.slider("Rischio per Trade (%)", 0.1, 5.0, 1.0)
-num_trades = st.sidebar.number_input("Numero di Trade da Simulare", value=1000)
-
+capitale_iniziale = st.sidebar.number_input("Capitale Iniziale (€)", value=100000)
+rischio_per_trade = st.sidebar.slider("Rischio per Trade (%)", 0.1, 5.0, 1.0)
+numero_trade = st.sidebar.number_input("Numero di Trade da Simulare", value=1000)
 winrate = st.sidebar.slider("Winrate Trade (%)", 10, 90, 40)
-
-# Allocazione per ogni entry
-entry_allocation = [0.10, 0.35, 0.55]
-entry_levels = [0.0, 0.33, 0.66]  # 0%, 33%, 66% tra entry e stop
-
-# TP/SL ratio
-rr = st.sidebar.slider("Rapporto Rischio/Rendimento (R:R)", 0.5, 5.0, 2.0)
-
-# Seed randomico per ripetibilità
+rapporto_rischio_rendimento = st.sidebar.slider("Rapporto Rischio/Rendimento (R:R)", 0.5, 5.0, 2.0)
 seed = st.sidebar.number_input("Seed Random (0 = casuale)", value=0)
 
-# Simulazione Monte Carlo
+# Parametri avanzati
+st.sidebar.header("Impostazioni Avanzate")
+multiple_entry = st.sidebar.slider("Numero massimo di Multiple Entry per trade", 1, 5, 1)
+dca_attivo = st.sidebar.checkbox("Attiva DCA", value=False)
+dca_percentuale = st.sidebar.slider("Percentuale Capitale Aggiuntivo su Perdita (%)", 10, 100, 50) if dca_attivo else 0
+trailing_stop_attivo = st.sidebar.checkbox("Attiva Trailing Stop", value=False)
+trailing_stop_percentuale = st.sidebar.slider("Trailing Stop (%)", 0.5, 5.0, 2.0) if trailing_stop_attivo else 0
+stop_max_drawdown = st.sidebar.slider("Max Drawdown (%)", 10, 100, 50)
+reinvesti_profitti = st.sidebar.checkbox("Reinvesti Profitti", value=True)
+
 if st.button("Lancia Simulazione"):
+    if seed != 0:
+        np.random.seed(seed)
 
-    np.random.seed(seed if seed != 0 else None)
+    capitale = capitale_iniziale
+    equity_curve = [capitale]
+    max_equity = capitale
+    drawdown = 0
+    trades = []
 
-    equity = capital
-    equity_curve = [capital]
-    profits = []
+    for i in range(int(numero_trade)):
+        trade_capitale = capitale * (rischio_per_trade / 100)
+        trade_outcome = np.random.rand() * 100 < winrate
 
-    for _ in range(num_trades):
-        trade_outcome = np.random.rand() < (winrate / 100)
+        profitto_per_trade = trade_capitale * rapporto_rischio_rendimento if trade_outcome else -trade_capitale
 
-        total_risk_eur = capital * (risk_per_trade_pct / 100)
+        # Multiple Entry
+        for e in range(1, multiple_entry):
+            if not trade_outcome and dca_attivo:
+                extra_capitale = capitale * (dca_percentuale / 100)
+                extra_outcome = np.random.rand() * 100 < winrate
+                profitto_extra = extra_capitale * rapporto_rischio_rendimento if extra_outcome else -extra_capitale
+                profitto_per_trade += profitto_extra
 
-        # Calcolo di quanto rischio su ogni entry
-        entry_risks = [total_risk_eur * alloc for alloc in entry_allocation]
+        capitale += profitto_per_trade if reinvesti_profitti else 0
+        equity_curve.append(capitale)
 
-        if trade_outcome:
-            # Vincita → calcolo profitto su ogni entry
-            trade_profit = sum([risk * rr for risk in entry_risks])
-            equity += trade_profit
-            profits.append(trade_profit)
-        else:
-            # Perdita → tutto lo stop
-            loss = total_risk_eur
-            equity -= loss
-            profits.append(-loss)
+        max_equity = max(max_equity, capitale)
+        drawdown = max(drawdown, (max_equity - capitale) / max_equity * 100)
 
-        equity_curve.append(equity)
+        trades.append(profitto_per_trade)
 
-    # Statistiche finali
-    total_return_pct = (equity - capital) / capital * 100
-    max_drawdown = np.min(equity_curve) - capital
+        if drawdown >= stop_max_drawdown:
+            st.warning(f"Simulazione interrotta al trade {i+1} per superamento drawdown massimo ({drawdown:.2f}%)")
+            break
 
-    profit_factor = round(
-        sum([p for p in profits if p > 0]) / abs(sum([p for p in profits if p < 0])), 2
-    )
+    st.success(f"Simulazione completata. Capitale finale: €{capitale:,.2f}")
 
-    simulated_winrate = round(len([p for p in profits if p > 0]) / num_trades * 100, 2)
-
-    st.subheader("📊 Risultati Simulazione")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Ritorno Totale (%)", f"{total_return_pct:.2f}%")
-    col2.metric("Profit Factor", f"{profit_factor}")
-    col3.metric("Max Drawdown (€)", f"{max_drawdown:.2f}")
-    col4.metric("Winrate Simulato (%)", f"{simulated_winrate}")
-
-    # Equity curve
-    st.subheader("📈 Equity Curve")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(equity_curve, color="dodgerblue")
-    ax.set_xlabel("Trade")
-    ax.set_ylabel("Equity (€)")
-    ax.grid(True)
+    # Plot equity curve
+    fig, ax = plt.subplots()
+    ax.plot(equity_curve, color='cyan')
+    ax.set_title("Equity Curve")
+    ax.set_xlabel("Numero Trade")
+    ax.set_ylabel("Capitale (€)")
     st.pyplot(fig)
 
-    # Distribuzione Profitti
-    st.subheader("📊 Distribuzione dei Profitti per Trade")
-    fig2, ax2 = plt.subplots()
-    sns.histplot(profits, bins=30, kde=True, ax=ax2, color="mediumseagreen")
-    ax2.set_xlabel("Profitto per Trade (€)")
-    st.pyplot(fig2)
+    # Statistiche finali
+    totale_trade = len(trades)
+    trade_vincenti = len([t for t in trades if t > 0])
+    trade_persi = totale_trade - trade_vincenti
+    st.write(f"**Totale Trade:** {totale_trade}")
+    st.write(f"**Trade Vincenti:** {trade_vincenti} ({trade_vincenti / totale_trade * 100:.2f}%)")
+    st.write(f"**Trade Persi:** {trade_persi} ({trade_persi / totale_trade * 100:.2f}%)")
+    st.write(f"**Max Drawdown:** {drawdown:.2f}%")
+
+    # Log Trade
+    with st.expander("📜 Log Dettagliato dei Trade"):
+        for n, t in enumerate(trades, 1):
+            st.write(f"Trade {n}: {'+' if t>=0 else ''}{t:,.2f} €")
+
 
